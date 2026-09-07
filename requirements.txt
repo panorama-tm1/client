@@ -1,0 +1,7 @@
+# Runtime
+nicegui[native]>=2.0,<3
+TM1py>=2.0,<3
+cryptography>=42
+
+# Packaging (nicegui-pack drives PyInstaller; Windows only for the .exe)
+pyinstaller>=6.6

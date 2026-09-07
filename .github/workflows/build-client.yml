@@ -1,0 +1,79 @@
+name: build-client
+
+# One Windows executable per Panorama instance. little-brother dispatches this
+# at the end of a deploy (Scripts/Initialize/12), passing the public half of
+# the RSA pair that step 04 just generated on that server. The exe that comes
+# out encrypts for THAT instance and no other.
+#
+# Run it by hand from the Actions tab to rebuild for an existing instance:
+# paste the contents of /root/project/secrets/keys/public_key.pem.
+
+on:
+  workflow_dispatch:
+    inputs:
+      instance:
+        description: 'Instance name (goes in the exe filename, e.g. demo)'
+        required: true
+        type: string
+      public_key:
+        description: 'PKCS1 RSA public key PEM of that instance'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Both inputs go through the environment, never through ${{ }} inside the
+      # script body: a public key is attacker-supplied text as far as the runner
+      # is concerned, and interpolating it into PowerShell would be an injection.
+      - name: Stamp the instance
+        shell: pwsh
+        env:
+          PUBLIC_KEY: ${{ inputs.public_key }}
+          INSTANCE: ${{ inputs.instance }}
+        run: |
+          $env:PUBLIC_KEY.Trim() | Set-Content -Path panorama_key.pem -Encoding ascii
+          $env:INSTANCE.Trim()   | Set-Content -Path panorama_instance.txt -Encoding ascii
+          # Filenames are not a place for whatever came in over the API.
+          $safe = $env:INSTANCE.Trim() -replace '[^A-Za-z0-9._-]', '-'
+          if (-not $safe) { throw "instance name is empty after sanitising" }
+          "EXE_NAME=panorama-client-$safe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # Fail here, in 5 seconds, rather than after a 4-minute pack that produces
+      # an exe which dies on the client's desktop.
+      - name: Verify the key loads
+        run: >
+          python -c "from cryptography.hazmat.primitives.serialization import
+          load_pem_public_key;
+          k = load_pem_public_key(open('panorama_key.pem','rb').read());
+          assert k.key_size >= 2048, f'key too small: {k.key_size}';
+          print('ok, RSA', k.key_size)"
+
+      - name: Pack
+        run: >
+          nicegui-pack --onefile --windowed --clean
+          --name "${{ env.EXE_NAME }}"
+          --add-data "panorama_key.pem;."
+          --add-data "panorama_instance.txt;."
+          main.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.EXE_NAME }}
+          path: dist/${{ env.EXE_NAME }}.exe
+          if-no-files-found: error
+          retention-days: 30

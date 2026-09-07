@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+
+# Build output
+build/
+dist/
+*.spec
+
+# Per-instance stamp written by the build - never commit a client's key
+panorama_instance.txt
+
+.venv/
