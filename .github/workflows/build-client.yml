@@ -1,8 +1,13 @@
 name: build-client
 
+# The run name carries the nonce little-brother generated, so it can find THIS
+# run among concurrent ones: a workflow_dispatch returns no run id, and matching
+# on "most recent" races with a second deploy started a few seconds later.
+run-name: build-client ${{ inputs.instance }} ${{ inputs.nonce }}
+
 # One Windows executable per Panorama instance. little-brother dispatches this
-# at the end of a deploy (Scripts/Initialize/12), passing the public half of
-# the RSA pair that step 04 just generated on that server. The exe that comes
+# (classes/ClientBuilder.py) after a deploy, passing the public half of the RSA
+# pair that Scripts/Initialize/04 generated on that server. The exe that comes
 # out encrypts for THAT instance and no other.
 #
 # Run it by hand from the Actions tab to rebuild for an existing instance:
@@ -18,6 +23,11 @@ on:
       public_key:
         description: 'PKCS1 RSA public key PEM of that instance'
         required: true
+        type: string
+      nonce:
+        description: 'Correlation id (little-brother fills this; any value by hand)'
+        required: false
+        default: 'manual'
         type: string
 
 permissions:
