@@ -1,0 +1,16 @@
+# The Prolog's file is released when its tab ends: send it from here.
+ExecuteHttpRequest('POST', sPanoramaUrl | '/worker/import/' | sInstanceId,
+  '-h Authorization:Bearer ' | sToken,
+  '-h Content-Type:text/plain',
+  '-d @' | sFile);
+nStatus = HttpResponseGetStatusCode();
+sResponse = HttpResponseGetBody();
+IF(FileExists(sFile) = 1);
+  ASCIIDelete(sFile);
+ENDIF;
+
+IF(nStatus <> 202);
+  LogOutput('ERROR', 'Panorama push failed for ' | sInstanceId | ', HTTP ' | NumberToString(nStatus) | ' ' | sResponse);
+  ProcessError;
+ENDIF;
+LogOutput('INFO', 'Panorama push: import queued for ' | sInstanceId | ' ' | sResponse);

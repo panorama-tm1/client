@@ -1,0 +1,17 @@
+# The Prolog's files are released when its tab ends: run the script here.
+sCommand = 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' | sScript | '" "' | sParams | '"';
+ExecuteCommand(sCommand, 1);
+
+# Normally already deleted by the script, unless PowerShell never started.
+IF(FileExists(sParams) = 1);
+  ASCIIDelete(sParams);
+ENDIF;
+IF(FileExists(sStruct) = 1);
+  ASCIIDelete(sStruct);
+ENDIF;
+
+IF(FileExists(sOk) = 0);
+  LogOutput('ERROR', 'Panorama push failed for ' | sInstanceId | ', details in ' | sLog);
+  ProcessError;
+ENDIF;
+LogOutput('INFO', 'Panorama push: import queued for ' | sInstanceId | ', details in ' | sLog);
