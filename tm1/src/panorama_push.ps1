@@ -15,40 +15,57 @@ $quote = [string][char]34
 
 # The .pro and .rux files sit in the data directory, which TI cannot name.
 # Candidates: the one set in the Prolog, DataBaseDirectory in the tm1s.cfg of
-# the TM1 server that started this script, the logging directory. The right
-# one holds the .pro of the running process.
+# the TM1 server that started this script, then the usual layouts around the
+# logging directory (data and logs side by side, or logs inside the data
+# directory). The right one holds the .pro of the running process.
 function Find-DataDir {
     $candidates = New-Object System.Collections.Generic.List[string]
     if ($cfg.DATA_DIR -ne '') { $candidates.Add($cfg.DATA_DIR) }
     try {
         $proc = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $PID)
-        for ($n = 0; $n -lt 6 -and $proc; $n++) {
+        $server = $null
+        for ($n = 0; $n -lt 6 -and $proc -and -not $server; $n++) {
             $proc = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $proc.ParentProcessId)
-            if ($proc -and $proc.Name -like 'tm1s*.exe') {
-                $binDir = Split-Path -Parent $proc.ExecutablePath
-                $configDir = $binDir
-                if ($proc.CommandLine -match ('-z\s*(?:' + $quote + '([^' + $quote + ']+)' + $quote + '|(\S+))')) {
-                    $configDir = if ($Matches[1]) { $Matches[1] } else { $Matches[2] }
-                }
-                $cfgFile = Join-Path $configDir 'tm1s.cfg'
-                if (Test-Path -LiteralPath $cfgFile) {
-                    foreach ($l in @(Get-Content -LiteralPath $cfgFile)) {
-                        if ($l -match '^\s*DataBaseDirectory\s*=\s*(.+?)\s*$') {
-                            foreach ($d in $Matches[1].Split(';')) {
-                                if ($d -eq '') { continue }
-                                if ([IO.Path]::IsPathRooted($d)) { $candidates.Add($d) }
-                                else { $candidates.Add((Join-Path $configDir $d)); $candidates.Add((Join-Path $binDir $d)) }
-                            }
+            if ($proc -and $proc.Name -like 'tm1s*.exe') { $server = $proc }
+        }
+        if (-not $server) {
+            Write-PushLog 'TM1 server process not found among the parents of this script'
+        } else {
+            Write-PushLog ('TM1 server ' + $server.CommandLine)
+            $binDir = Split-Path -Parent $server.ExecutablePath
+            $configDir = $binDir
+            if ($server.CommandLine -match ('-z\s*(?:' + $quote + '([^' + $quote + ']+)' + $quote + '|(\S+))')) {
+                $configDir = if ($Matches[1]) { $Matches[1] } else { $Matches[2] }
+            }
+            $cfgFile = Join-Path $configDir 'tm1s.cfg'
+            if (-not (Test-Path -LiteralPath $cfgFile)) {
+                Write-PushLog ('No ' + $cfgFile)
+            } else {
+                foreach ($l in @(Get-Content -LiteralPath $cfgFile)) {
+                    if ($l -match '^\s*DataBaseDirectory\s*=\s*(.+?)\s*$') {
+                        Write-PushLog ($cfgFile + ', DataBaseDirectory=' + $Matches[1])
+                        foreach ($d in $Matches[1].Split(';')) {
+                            if ($d -eq '') { continue }
+                            if ([IO.Path]::IsPathRooted($d)) { $candidates.Add($d) }
+                            else { $candidates.Add((Join-Path $configDir $d)); $candidates.Add((Join-Path $binDir $d)) }
                         }
                     }
                 }
-                break
             }
         }
     } catch {
         Write-PushLog ('tm1s.cfg lookup skipped: ' + $_.Exception.Message)
     }
     $candidates.Add($cfg.LOG_DIR)
+    try {
+        $parent = (Get-Item -LiteralPath $cfg.LOG_DIR).Parent
+        if ($parent) {
+            $candidates.Add($parent.FullName)
+            foreach ($sub in @(Get-ChildItem -LiteralPath $parent.FullName -Directory)) { $candidates.Add($sub.FullName) }
+        }
+    } catch {
+        Write-PushLog ('Logging directory not readable: ' + $_.Exception.Message)
+    }
     foreach ($d in $candidates) {
         if (Test-Path -LiteralPath (Join-Path $d ($cfg.PROCESS_NAME + '.pro'))) { return $d }
     }
