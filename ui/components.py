@@ -37,3 +37,12 @@ def progress_bar(steps: int, current: int) -> None:
 def step_header(step: int, name: str) -> None:
     """Render step header with number and name."""
     ui.label(f'{step + 1}/5 · {name}').classes('text-[11px] text-neutral-500 mb-3')
+
+
+def error_details(text: str) -> None:
+    """Render a collapsed Details block with the full error and a copy button."""
+    with ui.expansion('Details').classes('w-full text-[11px] text-neutral-500').props('dense dense-toggle'):
+        ui.label(text).classes('w-full whitespace-pre-wrap break-all font-mono text-[10px] text-neutral-400 select-text')
+        ui.button('Copy', on_click=lambda: ui.clipboard.write(text)).classes(
+            'bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[11px] h-7 px-3 mt-2'
+        ).props('flat dense')

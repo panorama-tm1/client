@@ -1,7 +1,18 @@
 """TM1 server discovery and data fetching."""
 
+import http.client
+import json
+import re
+
+import requests
 from TM1py import TM1Service
+from TM1py.Exceptions import TM1pyTimeout
 from TM1py.Utils import get_all_servers_from_adminhost
+
+try:
+    from TM1py.Exceptions import TM1pyNetworkException
+except ImportError:  # older TM1py 2.x, HTML answers come as TM1pyRestException
+    TM1pyNetworkException = ()
 
 
 def discover_servers(host: str, port: int) -> dict:
@@ -54,6 +65,59 @@ def parse_server_info(server) -> tuple[str, str, bool, int]:
     security_mode = mode_map.get(raw_mode, 1)
 
     return address, port, ssl, security_mode
+
+
+def _first_line(text: str) -> str:
+    lines = text.strip().splitlines()
+    return lines[0].strip() if lines else ''
+
+
+def explain_admin_error(ex: Exception) -> str:
+    """Turn an Admin Host discovery error into a short cause."""
+    # get_all_servers_from_adminhost uses http.client, not requests:
+    # network failures are OSError, a port that is not an Admin Host
+    # answers something that is not the expected JSON.
+    if isinstance(ex, (json.JSONDecodeError, KeyError, TypeError)):
+        return 'Not an Admin Host: check host and port'
+    if isinstance(ex, OSError):
+        return 'Admin Host unreachable: check host and port'
+    if isinstance(ex, http.client.HTTPException):
+        return 'Not an Admin Host: check host and port'
+    return _first_line(str(ex)) or type(ex).__name__
+
+
+def explain_error(ex: Exception) -> tuple[str, str | None]:
+    """Turn a TM1 connection or read error into a short cause.
+
+    Returns:
+        Tuple of (message, setting to fix: 'server', 'login' or None)
+    """
+    status = getattr(ex, 'status_code', None)
+    if status == 401:
+        return 'Wrong user, password or namespace', 'login'
+    if isinstance(ex, TM1pyNetworkException) or status == 404:
+        return 'No TM1 REST API at this address and port', 'server'
+    if status == 403:
+        return 'This TM1 account cannot read the model', 'login'
+    if isinstance(ex, requests.exceptions.SSLError):
+        return 'SSL problem: try switching SSL', 'server'
+    if isinstance(ex, requests.exceptions.ConnectTimeout):
+        return 'Server unreachable: check address and HTTP port', 'server'
+    if isinstance(ex, requests.exceptions.ConnectionError):
+        # Plain HTTP sent to an SSL port: TM1 drops the connection
+        if re.search(r'RemoteDisconnected|Connection aborted|reset by peer', str(ex), re.IGNORECASE):
+            return 'Server closed the connection: try switching SSL', 'server'
+        return 'Server unreachable: check address and HTTP port', 'server'
+    if isinstance(ex, (requests.exceptions.Timeout, TM1pyTimeout)):
+        return 'TM1 did not answer in time', None
+    if status is not None:
+        # str() of a TM1py REST error dumps the response headers: keep TM1's own message
+        try:
+            message = json.loads(ex.response)['error']['message']
+        except Exception:
+            message = _first_line(getattr(ex, 'response', '') or '')
+        return (f'TM1 error {status}: {message}' if message else f'TM1 error {status}'), None
+    return _first_line(str(ex)) or type(ex).__name__, None
 
 
 def fetch_tm1_data(

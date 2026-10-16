@@ -103,9 +103,11 @@ Shows fetch progress and allows downloading the encrypted file.
 **States:**
 1. **Loading** - Spinner with progress bar (Connecting → Fetching → Encrypting)
 2. **Ready** - File icon with filename, Download button enabled
+3. **Error** - Short cause (login, address/port, SSL, rights, timeout) and a collapsed **Details** block with the full error and a Copy button (password masked)
 
 **Actions:**
 - **Download** - Save encrypted `.txt` file
+- **Change settings** - On error, opens the step to fix: Server for address, port or SSL, Authentication otherwise
 
 ---
 
@@ -174,6 +176,8 @@ Shows fetch progress and allows downloading the encrypted file.
 - `discover_servers(host, port)` - Query Admin Host for servers
 - `parse_server_info(server)` - Extract address, port, SSL from server object
 - `fetch_tm1_data(...)` - Fetch Process, Cube, Dimension data (supports all security modes)
+- `explain_error(ex)` - Short cause of a TM1 connection/read error and the setting to fix (`server`, `login` or `None`)
+- `explain_admin_error(ex)` - Short cause of an Admin Host discovery error
 
 ### services/encryption.py
 - `encrypt_data(data)` - RSA-OAEP encrypt data in 190-byte chunks
@@ -183,6 +187,7 @@ Shows fetch progress and allows downloading the encrypted file.
 - `labeled_input(label, value, password, classes)` - Input with label
 - `progress_bar(steps, current)` - Step progress indicator
 - `step_header(step, name)` - Step number and name
+- `error_details(text)` - Collapsed Details block with the full error and a Copy button
 
 ### ui/wizard.py
 - `TM1Wizard` - Main wizard class with all step logic

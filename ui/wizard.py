@@ -13,9 +13,11 @@ from config import (
 # Short labels for dropdown display
 SECURITY_LABELS = {1: 'TM1', 2: 'INT', 3: 'CAM', 4: 'SSO', 5: 'LDAP'}
 from styles import APP_STYLES, FILE_ICON_SVG
-from services.tm1 import discover_servers, parse_server_info, fetch_tm1_data
+from services.tm1 import (
+    discover_servers, parse_server_info, fetch_tm1_data, explain_error, explain_admin_error
+)
 from services.encryption import encrypt_data
-from ui.components import radio_option, labeled_input, progress_bar, step_header
+from ui.components import radio_option, labeled_input, progress_bar, step_header, error_details
 
 
 class TM1Wizard:
@@ -26,6 +28,7 @@ class TM1Wizard:
         self.use_admin = False
         self.discovered = {}
         self.encrypted = None
+        self.fix_step = 4
 
         self.server = DEFAULT_SERVER
         self.port = DEFAULT_PORT
@@ -78,7 +81,9 @@ class TM1Wizard:
         with ui.row().classes('w-full items-center gap-2 mb-2'):
             self.spinner = ui.spinner('dots', size='sm', color='neutral')
             self.spinner.visible = False
-            self.lbl_disc = ui.label('').classes('text-[11px] text-neutral-400')
+            self.lbl_disc = ui.label('').classes('flex-1 min-w-0 break-words text-[11px] text-neutral-400')
+
+        self.disc_details = ui.column().classes('w-full gap-0')
 
         with ui.column().classes('w-full gap-0.5'):
             ui.label('Server').classes('text-[11px] text-neutral-500')
@@ -125,17 +130,24 @@ class TM1Wizard:
 
     def _step_download(self):
         """Step 5: Fetch and download."""
-        with ui.column().classes('w-full items-center py-6'):
+        with ui.column().classes('w-full items-center py-6') as self.dl_box:
             self.dl_spinner = ui.spinner('dots', size='lg', color='neutral')
             self.dl_icon = ui.html(FILE_ICON_SVG, sanitize=False).classes('text-neutral-400')
             self.dl_icon.visible = False
 
-            self.lbl_st = ui.label('Connecting...').classes('text-[13px] text-neutral-400 mt-4')
+            self.lbl_st = ui.label('Connecting...').classes(
+                'text-[13px] text-neutral-400 mt-4 text-center whitespace-normal break-words'
+            )
 
             self.bar = ui.linear_progress(value=0, show_value=False).classes('w-full mt-4').props('color=grey-6')
             self.bar.style('height: 2px')
 
             with ui.row().classes('gap-2 mt-4'):
+                self.btn_fix = ui.button('Change settings', on_click=lambda: self._go_to(self.fix_step)).classes(
+                    'bg-neutral-200 hover:bg-neutral-300 text-neutral-900 text-[12px] h-8 px-6'
+                ).props('flat')
+                self.btn_fix.visible = False
+
                 self.btn_dl = ui.button('Download', on_click=self._save).classes(
                     'bg-neutral-200 hover:bg-neutral-300 text-neutral-900 text-[12px] h-8 px-6'
                 ).props('flat')
@@ -188,19 +200,21 @@ class TM1Wizard:
         self.btn_disc.disable()
         self.spinner.visible = True
         self.lbl_disc.text = 'Discovering servers...'
+        self.disc_details.clear()
 
         try:
             host = self.inp_ah.value.strip()
-            port = int(self.inp_ap.value.strip() or DEFAULT_ADMIN_PORT)
+            port = self.inp_ap.value.strip() or DEFAULT_ADMIN_PORT
+            if not port.isdigit():
+                self.lbl_disc.text = 'Port must be a number'
+                return
 
             self.discovered = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: discover_servers(host, port)
+                None, lambda: discover_servers(host, int(port))
             )
 
-            self.spinner.visible = False
-
             if not self.discovered:
-                self.lbl_disc.text = 'No servers found'
+                self.lbl_disc.text = 'No TM1 server found on this Admin Host'
                 return
 
             # Build display names with security mode prefix
@@ -219,10 +233,12 @@ class TM1Wizard:
             self.lbl_disc.text = f'{len(display_names)} server{"s" if len(display_names) > 1 else ""} found'
             self._on_server_select(type('E', (), {'value': display_names[0]})())
 
-        except Exception:
-            self.spinner.visible = False
-            self.lbl_disc.text = 'Connection error'
+        except Exception as ex:
+            self.lbl_disc.text = explain_admin_error(ex)
+            with self.disc_details:
+                error_details(self._error_detail(ex))
         finally:
+            self.spinner.visible = False
             self.btn_disc.enable()
 
     def _back(self):
@@ -236,6 +252,11 @@ class TM1Wizard:
                 new_step = 0
             self.step = new_step
             ui.navigate.to('/app')
+
+    def _go_to(self, step: int):
+        """Navigate to a given step."""
+        self.step = step
+        ui.navigate.to('/app')
 
     def _next(self):
         """Navigate to next step."""
@@ -270,6 +291,10 @@ class TM1Wizard:
 
     async def _fetch(self):
         """Fetch data from TM1 server and encrypt."""
+        if not self.port.strip().isdigit():
+            self._show_fetch_error('Port must be a number', 'server')
+            return
+
         try:
             self.lbl_st.text = 'Connecting...'
             self.bar.value = 0.1
@@ -305,9 +330,27 @@ class TM1Wizard:
             self.btn_quit.visible = True
 
         except Exception as ex:
-            self.dl_spinner.visible = False
-            self.lbl_st.text = f'Error: {str(ex)[:40]}'
-            self.bar.value = 0
+            cause, setting = explain_error(ex)
+            self._show_fetch_error(cause, setting, ex)
+
+    def _show_fetch_error(self, cause: str, setting: str | None, ex: Exception = None):
+        """Show why the fetch failed, with a shortcut to the step to fix."""
+        self.dl_spinner.visible = False
+        self.lbl_st.text = cause
+        self.bar.value = 0
+        # Address, port and SSL live on the Server step, credentials on Authentication
+        self.fix_step = 2 if setting == 'server' else 4
+        self.btn_fix.visible = True
+        if ex is not None:
+            with self.dl_box:
+                error_details(self._error_detail(ex))
+
+    def _error_detail(self, ex: Exception) -> str:
+        """Full error text for support, without the password."""
+        detail = f'{type(ex).__name__}: {ex}'
+        if self.pwd:
+            detail = detail.replace(self.pwd, '***')
+        return detail
 
     async def _save(self):
         """Save encrypted data to file."""
